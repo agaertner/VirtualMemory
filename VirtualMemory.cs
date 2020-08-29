@@ -101,7 +101,7 @@ namespace VirtualMemory
         /// <summary>
         /// Resolves a multi-level 32bit pointer address.
         /// </summary>
-        /// <param name="address">Separated list of address and pointers.<para/>
+        /// <param name="address">Separated (in any way) list of address and pointers.<para/>
         /// Example: $"{BaseAddress} + 0x01639068 + 0x508 + 0x38 + 0x30 + 0x338 + 0xDC"<para/>
         /// Note: "0x" is not needed. RegEx is used to match any hexadecimals.</param>
         /// <returns>The actual and final address that is pointed to.</returns>
