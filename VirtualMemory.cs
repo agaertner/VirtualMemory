@@ -4,10 +4,11 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Windows.Forms;
-
 namespace VirtualMemory
 {
+    /// <summary>
+    /// Wrapper for kernel32 read/write virtual process memory methods.
+    /// </summary>
     public class VirtualMemory
     {
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -56,32 +57,28 @@ namespace VirtualMemory
         }
 
         /// <summary>
-        /// Checks if the process exists and that it can be opened.
+        /// Gets the process matching the name in 'processName' and opens it.
         /// </summary>
-        /// <returns>TRUE if process exists. Otherwise FALSE</returns>
-        public bool CheckProcess()
+        /// <exception cref="InvalidOperationException">If process name is not defined.</exception>
+        /// <exception cref="ProcessNotFoundException">If no running process matches the defined name.</exception>
+        public void Initialize()
         {
             if (this.processName == null)
             {
-                MessageBox.Show("Programmer, define process name first!");
-                return false;
+                throw new InvalidOperationException("A process name was not defined.");
             }
 
             this.mainProcess = Process.GetProcessesByName(this.processName);
             if (this.mainProcess.Length == 0)
             {
-                this.ErrorProcessNotFound(this.processName);
-                return false;
+                throw new ProcessNotFoundException($"The process '{this.processName}' has not been found.");
             }
 
             this.processHandle = VirtualMemory.OpenProcess(2035711U, false, this.mainProcess[0].Id);
             if (this.processHandle == IntPtr.Zero)
             {
-                this.ErrorProcessNotFound(this.processName);
-                return false;
+                throw new ProcessNotFoundException($"The process '{this.processName}' has not been found.");
             }
-
-            return true;
         }
 
         private static readonly Regex GET_HEXADECIMAL = new Regex($"(0x)?[a-fA-F0-9]+", RegexOptions.Multiline | RegexOptions.Compiled);
@@ -89,10 +86,10 @@ namespace VirtualMemory
         /// <summary>
         /// Resolves a multi-level 64bit pointer address.
         /// </summary>
-        /// <param name="address">Separated list of base address and pointers<para/>
-        /// (ex.: $"{BaseAddress}+0x01639068+0x508+0x38+0x30+0x338+0xDC").<para/>
+        /// <param name="address">Separated (in any way) list of base address and pointers.<para/>
+        /// Example: $"{BaseAddress} + 0x01639068 + 0x508 + 0x38 + 0x30 + 0x338 + 0xDC"<para/>
         /// Note: "0x" is not needed. RegEx is used to match any hexadecimals.</param>
-        /// <returns>The address that is pointed to.</returns>
+        /// <returns>The actual and final address that is pointed to.</returns>
         public long ResolveInt64FromString(string address)
         {
             var offsets = GET_HEXADECIMAL.Matches(address).Cast<Match>().Select(m => m.Value).ToArray();
@@ -104,10 +101,10 @@ namespace VirtualMemory
         /// <summary>
         /// Resolves a multi-level 32bit pointer address.
         /// </summary>
-        /// <param name="address">Separated list of address and pointers<para/>
-        /// Example: $"{BaseAddress}+0x01639068+0x508+0x38+0x30+0x338+0xDC").<para/>
+        /// <param name="address">Separated list of address and pointers.<para/>
+        /// Example: $"{BaseAddress} + 0x01639068 + 0x508 + 0x38 + 0x30 + 0x338 + 0xDC"<para/>
         /// Note: "0x" is not needed. RegEx is used to match any hexadecimals.</param>
-        /// <returns>The address that is pointed to.</returns>
+        /// <returns>The actual and final address that is pointed to.</returns>
         public int ResolveInt32FromString(string address)
         {
             var offsets = GET_HEXADECIMAL.Matches(address).Cast<Match>().Select(m => m.Value).ToArray();
@@ -121,7 +118,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             byte[] result;
@@ -151,7 +148,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             string result;
@@ -176,7 +173,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             string result;
@@ -201,7 +198,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             char result;
@@ -226,7 +223,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -251,7 +248,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             byte result;
@@ -276,7 +273,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             short result;
@@ -301,7 +298,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             short result;
@@ -326,7 +323,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             int result;
@@ -351,7 +348,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             int result;
@@ -376,7 +373,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             long result;
@@ -401,7 +398,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             long result;
@@ -426,7 +423,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             ushort result;
@@ -451,7 +448,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             ushort result;
@@ -476,7 +473,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             uint result;
@@ -501,7 +498,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             uint result;
@@ -526,7 +523,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             ulong result;
@@ -551,7 +548,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             long result;
@@ -576,7 +573,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             float result;
@@ -601,7 +598,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             double result;
@@ -626,7 +623,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -657,7 +654,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -682,7 +679,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -707,7 +704,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -732,7 +729,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -757,7 +754,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -782,7 +779,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -807,7 +804,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -832,7 +829,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -857,7 +854,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -882,7 +879,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -907,7 +904,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -932,7 +929,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -957,7 +954,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -982,7 +979,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -1007,7 +1004,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -1032,7 +1029,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -1057,7 +1054,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -1082,7 +1079,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -1107,7 +1104,7 @@ namespace VirtualMemory
         {
             if (this.processHandle == IntPtr.Zero)
             {
-                this.CheckProcess();
+                this.Initialize();
             }
 
             bool result;
@@ -1127,13 +1124,6 @@ namespace VirtualMemory
 
             return result;
         }
-
-        private void ErrorProcessNotFound(string pProcessName)
-        {
-            MessageBox.Show(this.processName + " is not running or has not been found. Please check and try again",
-                "Process Not Found", MessageBoxButtons.OK, MessageBoxIcon.Hand);
-        }
-
         public static bool debugMode;
 
         private IntPtr baseAddress;
@@ -1174,4 +1164,16 @@ namespace VirtualMemory
             PROCESS_ALL_ACCESS = 2035711U
         }
     }
+
+    #region Exceptions
+    public class ProcessNotFoundException : Exception
+    {
+        public ProcessNotFoundException(string message) : base(message)
+        {
+        }
+        public ProcessNotFoundException(string message, Exception inner) : base(message, inner)
+        {
+        }
+    }
+    #endregion
 }
