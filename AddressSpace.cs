@@ -4,12 +4,13 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+
 namespace VirtualMemory
 {
     /// <summary>
     /// Wrapper for kernel32 read/write virtual process memory methods.
     /// </summary>
-    public class VirtualMemory
+    public class AddressSpace
     {
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer,
@@ -33,55 +34,49 @@ namespace VirtualMemory
         private static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize,
             uint flAllocationType, uint flProtect);
 
-        public string processName { get; set; }
+        public string ProcessName { get; set; }
 
         /// <summary>
         /// The base address of the main module of the main process.
         /// </summary>
-        public long getBaseAddress
+        public long GetBaseAddress
         {
             get
             {
-                this.baseAddress = (IntPtr) 0;
-                this.processModule = this.mainProcess[0].MainModule;
-                this.baseAddress = this.processModule.BaseAddress;
-                return (long) this.baseAddress;
+                _baseAddress = (IntPtr) 0;
+                _processModule = _mainProcess[0].MainModule;
+                _baseAddress = _processModule?.BaseAddress ?? IntPtr.Zero;
+                return (long) _baseAddress;
             }
         }
 
-        public VirtualMemory() { }
+        public AddressSpace() { }
 
-        public VirtualMemory(string pProcessName)
+        public AddressSpace(string pProcessName)
         {
-            this.processName = pProcessName;
+            ProcessName = pProcessName;
         }
 
         /// <summary>
-        /// Gets the process matching the name in 'processName' and opens it.
+        /// Gets the process matching the name in 'ProcessName' and opens it.
         /// </summary>
         /// <exception cref="InvalidOperationException">If process name is not defined.</exception>
         /// <exception cref="ProcessNotFoundException">If no running process matches the defined name.</exception>
         public void Initialize()
         {
-            if (this.processName == null)
-            {
+            if (ProcessName == null)
                 throw new InvalidOperationException("A process name was not defined.");
-            }
 
-            this.mainProcess = Process.GetProcessesByName(this.processName);
-            if (this.mainProcess.Length == 0)
-            {
-                throw new ProcessNotFoundException($"The process '{this.processName}' has not been found.");
-            }
+            _mainProcess = Process.GetProcessesByName(ProcessName);
+            if (_mainProcess.Length == 0)
+                throw new ProcessNotFoundException($"The process '{ProcessName}' has not been found.");
 
-            this.processHandle = VirtualMemory.OpenProcess(2035711U, false, this.mainProcess[0].Id);
-            if (this.processHandle == IntPtr.Zero)
-            {
-                throw new ProcessNotFoundException($"The process '{this.processName}' has not been found.");
-            }
+            _processHandle = OpenProcess(2035711U, false, _mainProcess[0].Id);
+            if (_processHandle == IntPtr.Zero)
+                throw new ProcessNotFoundException($"The process '{ProcessName}' has not been found.");
         }
 
-        private static readonly Regex GET_HEXADECIMAL = new Regex($"(0x)?[a-fA-F0-9]+", RegexOptions.Multiline | RegexOptions.Compiled);
+        private static readonly Regex GetHexadecimal = new Regex("(0x)?[a-fA-F0-9]+", RegexOptions.Multiline | RegexOptions.Compiled);
 
         /// <summary>
         /// Resolves a multi-level 64bit pointer address.
@@ -92,10 +87,10 @@ namespace VirtualMemory
         /// <returns>The actual and final address that is pointed to.</returns>
         public long ResolveInt64FromString(string address)
         {
-            var offsets = GET_HEXADECIMAL.Matches(address).Cast<Match>().Select(m => m.Value).ToArray();
+            var offsets = GetHexadecimal.Matches(address).Cast<Match>().Select(m => m.Value).ToArray();
             long current = Convert.ToInt64(offsets[0]);
             for (int i = 1; i < offsets.Length - 1; i++)
-                current = this.ReadInt64((IntPtr) current + Convert.ToInt32(offsets[i], 16));
+                current = ReadInt64((IntPtr) current + Convert.ToInt32(offsets[i], 16));
             return current + Convert.ToInt32(offsets[offsets.Length - 1], 16);
         }
         /// <summary>
@@ -107,35 +102,34 @@ namespace VirtualMemory
         /// <returns>The actual and final address that is pointed to.</returns>
         public int ResolveInt32FromString(string address)
         {
-            var offsets = GET_HEXADECIMAL.Matches(address).Cast<Match>().Select(m => m.Value).ToArray();
+            var offsets = GetHexadecimal.Matches(address).Cast<Match>().Select(m => m.Value).ToArray();
             int current = Convert.ToInt32(offsets[0]);
             for (int i = 1; i < offsets.Length - 1; i++)
-                current = this.ReadInt32((IntPtr) current + Convert.ToInt32(offsets[i], 16));
+                current = ReadInt32((IntPtr) current + Convert.ToInt32(offsets[i], 16));
             return current + Convert.ToInt32(offsets[offsets.Length - 1], 16);
         }
 
         public byte[] ReadByteArray(IntPtr pOffset, uint pSize)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             byte[] result;
             try
             {
-                uint flNewProtect;
-                VirtualMemory.VirtualProtectEx(this.processHandle, pOffset, (UIntPtr) pSize, 4U, out flNewProtect);
+                VirtualProtectEx(_processHandle, pOffset, (UIntPtr) pSize, 4U, out var flNewProtect);
                 byte[] array = new byte[pSize];
-                VirtualMemory.ReadProcessMemory(this.processHandle, pOffset, array, pSize, 0U);
-                VirtualMemory.VirtualProtectEx(this.processHandle, pOffset, (UIntPtr) pSize, flNewProtect, out flNewProtect);
+                ReadProcessMemory(_processHandle, pOffset, array, pSize, 0U);
+                VirtualProtectEx(_processHandle, pOffset, (UIntPtr) pSize, flNewProtect, out flNewProtect);
                 result = array;
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadByteArray" + ex.ToString());
+                    Console.WriteLine("Error: ReadByteArray" + ex);
                 }
 
                 result = new byte[1];
@@ -146,21 +140,21 @@ namespace VirtualMemory
 
         public string ReadStringUnicode(IntPtr pOffset, uint pSize)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             string result;
             try
             {
-                result = Encoding.Unicode.GetString(this.ReadByteArray(pOffset, pSize), 0, (int) pSize);
+                result = Encoding.Unicode.GetString(ReadByteArray(pOffset, pSize), 0, (int) pSize);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadStringUnicode" + ex.ToString());
+                    Console.WriteLine("Error: ReadStringUnicode" + ex);
                 }
 
                 result = "";
@@ -171,21 +165,21 @@ namespace VirtualMemory
 
         public string ReadStringASCII(IntPtr pOffset, uint pSize)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             string result;
             try
             {
-                result = Encoding.ASCII.GetString(this.ReadByteArray(pOffset, pSize), 0, (int) pSize);
+                result = Encoding.ASCII.GetString(ReadByteArray(pOffset, pSize), 0, (int) pSize);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadStringASCII" + ex.ToString());
+                    Console.WriteLine("Error: ReadStringASCII" + ex);
                 }
 
                 result = "";
@@ -196,21 +190,21 @@ namespace VirtualMemory
 
         public char ReadChar(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             char result;
             try
             {
-                result = BitConverter.ToChar(this.ReadByteArray(pOffset, 1U), 0);
+                result = BitConverter.ToChar(ReadByteArray(pOffset, 1U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadChar" + ex.ToString());
+                    Console.WriteLine("Error: ReadChar" + ex);
                 }
 
                 result = ' ';
@@ -221,21 +215,21 @@ namespace VirtualMemory
 
         public bool ReadBoolean(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = BitConverter.ToBoolean(this.ReadByteArray(pOffset, 1U), 0);
+                result = BitConverter.ToBoolean(ReadByteArray(pOffset, 1U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadByte" + ex.ToString());
+                    Console.WriteLine("Error: ReadByte" + ex);
                 }
 
                 result = false;
@@ -246,21 +240,21 @@ namespace VirtualMemory
 
         public byte ReadByte(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             byte result;
             try
             {
-                result = this.ReadByteArray(pOffset, 1U)[0];
+                result = ReadByteArray(pOffset, 1U)[0];
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadByte" + ex.ToString());
+                    Console.WriteLine("Error: ReadByte" + ex);
                 }
 
                 result = 0;
@@ -271,21 +265,21 @@ namespace VirtualMemory
 
         public short ReadInt16(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             short result;
             try
             {
-                result = BitConverter.ToInt16(this.ReadByteArray(pOffset, 2U), 0);
+                result = BitConverter.ToInt16(ReadByteArray(pOffset, 2U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadInt16" + ex.ToString());
+                    Console.WriteLine("Error: ReadInt16" + ex);
                 }
 
                 result = 0;
@@ -296,21 +290,21 @@ namespace VirtualMemory
 
         public short ReadShort(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             short result;
             try
             {
-                result = BitConverter.ToInt16(this.ReadByteArray(pOffset, 2U), 0);
+                result = BitConverter.ToInt16(ReadByteArray(pOffset, 2U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadInt16" + ex.ToString());
+                    Console.WriteLine("Error: ReadInt16" + ex);
                 }
 
                 result = 0;
@@ -321,21 +315,21 @@ namespace VirtualMemory
 
         public int ReadInt32(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             int result;
             try
             {
-                result = BitConverter.ToInt32(this.ReadByteArray(pOffset, 4U), 0);
+                result = BitConverter.ToInt32(ReadByteArray(pOffset, 4U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadInt32" + ex.ToString());
+                    Console.WriteLine("Error: ReadInt32" + ex);
                 }
 
                 result = 0;
@@ -346,21 +340,21 @@ namespace VirtualMemory
 
         public int ReadInteger(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             int result;
             try
             {
-                result = BitConverter.ToInt32(this.ReadByteArray(pOffset, 4U), 0);
+                result = BitConverter.ToInt32(ReadByteArray(pOffset, 4U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadInteger" + ex.ToString());
+                    Console.WriteLine("Error: ReadInteger" + ex);
                 }
 
                 result = 0;
@@ -371,21 +365,21 @@ namespace VirtualMemory
 
         public long ReadInt64(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             long result;
             try
             {
-                result = BitConverter.ToInt64(this.ReadByteArray(pOffset, 8U), 0);
+                result = BitConverter.ToInt64(ReadByteArray(pOffset, 8U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadInt64" + ex.ToString());
+                    Console.WriteLine("Error: ReadInt64" + ex);
                 }
 
                 result = 0L;
@@ -396,21 +390,21 @@ namespace VirtualMemory
 
         public long ReadLong(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             long result;
             try
             {
-                result = BitConverter.ToInt64(this.ReadByteArray(pOffset, 8U), 0);
+                result = BitConverter.ToInt64(ReadByteArray(pOffset, 8U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadLong" + ex.ToString());
+                    Console.WriteLine("Error: ReadLong" + ex);
                 }
 
                 result = 0L;
@@ -421,21 +415,21 @@ namespace VirtualMemory
 
         public ushort ReadUInt16(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             ushort result;
             try
             {
-                result = BitConverter.ToUInt16(this.ReadByteArray(pOffset, 2U), 0);
+                result = BitConverter.ToUInt16(ReadByteArray(pOffset, 2U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadUInt16" + ex.ToString());
+                    Console.WriteLine("Error: ReadUInt16" + ex);
                 }
 
                 result = 0;
@@ -446,21 +440,21 @@ namespace VirtualMemory
 
         public ushort ReadUShort(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             ushort result;
             try
             {
-                result = BitConverter.ToUInt16(this.ReadByteArray(pOffset, 2U), 0);
+                result = BitConverter.ToUInt16(ReadByteArray(pOffset, 2U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadUShort" + ex.ToString());
+                    Console.WriteLine("Error: ReadUShort" + ex);
                 }
 
                 result = 0;
@@ -471,21 +465,21 @@ namespace VirtualMemory
 
         public uint ReadUInt32(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             uint result;
             try
             {
-                result = BitConverter.ToUInt32(this.ReadByteArray(pOffset, 4U), 0);
+                result = BitConverter.ToUInt32(ReadByteArray(pOffset, 4U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadUInt32" + ex.ToString());
+                    Console.WriteLine("Error: ReadUInt32" + ex);
                 }
 
                 result = 0U;
@@ -496,21 +490,21 @@ namespace VirtualMemory
 
         public uint ReadUInteger(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             uint result;
             try
             {
-                result = BitConverter.ToUInt32(this.ReadByteArray(pOffset, 4U), 0);
+                result = BitConverter.ToUInt32(ReadByteArray(pOffset, 4U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadUInteger" + ex.ToString());
+                    Console.WriteLine("Error: ReadUInteger" + ex);
                 }
 
                 result = 0U;
@@ -521,21 +515,21 @@ namespace VirtualMemory
 
         public ulong ReadUInt64(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             ulong result;
             try
             {
-                result = BitConverter.ToUInt64(this.ReadByteArray(pOffset, 8U), 0);
+                result = BitConverter.ToUInt64(ReadByteArray(pOffset, 8U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadUInt64" + ex.ToString());
+                    Console.WriteLine("Error: ReadUInt64" + ex);
                 }
 
                 result = 0UL;
@@ -546,21 +540,21 @@ namespace VirtualMemory
 
         public long ReadULong(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             long result;
             try
             {
-                result = (long) BitConverter.ToUInt64(this.ReadByteArray(pOffset, 8U), 0);
+                result = (long) BitConverter.ToUInt64(ReadByteArray(pOffset, 8U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadULong" + ex.ToString());
+                    Console.WriteLine("Error: ReadULong" + ex);
                 }
 
                 result = 0L;
@@ -571,21 +565,21 @@ namespace VirtualMemory
 
         public float ReadFloat(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             float result;
             try
             {
-                result = BitConverter.ToSingle(this.ReadByteArray(pOffset, 4U), 0);
+                result = BitConverter.ToSingle(ReadByteArray(pOffset, 4U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadFloat" + ex.ToString());
+                    Console.WriteLine("Error: ReadFloat" + ex);
                 }
 
                 result = 0f;
@@ -596,21 +590,21 @@ namespace VirtualMemory
 
         public double ReadDouble(IntPtr pOffset)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             double result;
             try
             {
-                result = BitConverter.ToDouble(this.ReadByteArray(pOffset, 8U), 0);
+                result = BitConverter.ToDouble(ReadByteArray(pOffset, 8U), 0);
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: ReadDouble" + ex.ToString());
+                    Console.WriteLine("Error: ReadDouble" + ex);
                 }
 
                 result = 0.0;
@@ -621,27 +615,27 @@ namespace VirtualMemory
 
         public bool WriteByteArray(IntPtr pOffset, byte[] pBytes)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
                 uint flNewProtect;
-                VirtualMemory.VirtualProtectEx(this.processHandle, pOffset, (UIntPtr) ((ulong) ((long) pBytes.Length)), 4U,
+                VirtualProtectEx(_processHandle, pOffset, (UIntPtr) ((ulong) pBytes.Length), 4U,
                     out flNewProtect);
-                bool flag = VirtualMemory.WriteProcessMemory(this.processHandle, pOffset, pBytes, (uint) pBytes.Length, 0U);
-                VirtualMemory.VirtualProtectEx(this.processHandle, pOffset, (UIntPtr) ((ulong) ((long) pBytes.Length)),
+                bool flag = WriteProcessMemory(_processHandle, pOffset, pBytes, (uint) pBytes.Length, 0U);
+                VirtualProtectEx(_processHandle, pOffset, (UIntPtr) ((ulong) pBytes.Length),
                     flNewProtect, out flNewProtect);
                 result = flag;
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteByteArray" + ex.ToString());
+                    Console.WriteLine("Error: WriteByteArray" + ex);
                 }
 
                 result = false;
@@ -652,21 +646,21 @@ namespace VirtualMemory
 
         public bool WriteStringUnicode(IntPtr pOffset, string pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, Encoding.Unicode.GetBytes(pData));
+                result = WriteByteArray(pOffset, Encoding.Unicode.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteStringUnicode" + ex.ToString());
+                    Console.WriteLine("Error: WriteStringUnicode" + ex);
                 }
 
                 result = false;
@@ -677,21 +671,21 @@ namespace VirtualMemory
 
         public bool WriteStringASCII(IntPtr pOffset, string pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, Encoding.ASCII.GetBytes(pData));
+                result = WriteByteArray(pOffset, Encoding.ASCII.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteStringASCII" + ex.ToString());
+                    Console.WriteLine("Error: WriteStringASCII" + ex);
                 }
 
                 result = false;
@@ -702,21 +696,21 @@ namespace VirtualMemory
 
         public bool WriteBoolean(IntPtr pOffset, bool pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteBoolean" + ex.ToString());
+                    Console.WriteLine("Error: WriteBoolean" + ex);
                 }
 
                 result = false;
@@ -727,21 +721,21 @@ namespace VirtualMemory
 
         public bool WriteChar(IntPtr pOffset, char pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteChar" + ex.ToString());
+                    Console.WriteLine("Error: WriteChar" + ex);
                 }
 
                 result = false;
@@ -752,21 +746,21 @@ namespace VirtualMemory
 
         public bool WriteByte(IntPtr pOffset, byte pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes((short) pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteByte" + ex.ToString());
+                    Console.WriteLine("Error: WriteByte" + ex);
                 }
 
                 result = false;
@@ -777,21 +771,21 @@ namespace VirtualMemory
 
         public bool WriteInt16(IntPtr pOffset, short pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteInt16" + ex.ToString());
+                    Console.WriteLine("Error: WriteInt16" + ex);
                 }
 
                 result = false;
@@ -802,21 +796,21 @@ namespace VirtualMemory
 
         public bool WriteShort(IntPtr pOffset, short pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteShort" + ex.ToString());
+                    Console.WriteLine("Error: WriteShort" + ex);
                 }
 
                 result = false;
@@ -827,21 +821,21 @@ namespace VirtualMemory
 
         public bool WriteInt32(IntPtr pOffset, int pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteInt32" + ex.ToString());
+                    Console.WriteLine("Error: WriteInt32" + ex);
                 }
 
                 result = false;
@@ -852,21 +846,21 @@ namespace VirtualMemory
 
         public bool WriteInteger(IntPtr pOffset, int pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteInt" + ex.ToString());
+                    Console.WriteLine("Error: WriteInt" + ex);
                 }
 
                 result = false;
@@ -877,21 +871,21 @@ namespace VirtualMemory
 
         public bool WriteInt64(IntPtr pOffset, long pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteInt64" + ex.ToString());
+                    Console.WriteLine("Error: WriteInt64" + ex);
                 }
 
                 result = false;
@@ -902,21 +896,21 @@ namespace VirtualMemory
 
         public bool WriteLong(IntPtr pOffset, long pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteLong" + ex.ToString());
+                    Console.WriteLine("Error: WriteLong" + ex);
                 }
 
                 result = false;
@@ -927,21 +921,21 @@ namespace VirtualMemory
 
         public bool WriteUInt16(IntPtr pOffset, ushort pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteUInt16" + ex.ToString());
+                    Console.WriteLine("Error: WriteUInt16" + ex);
                 }
 
                 result = false;
@@ -952,21 +946,21 @@ namespace VirtualMemory
 
         public bool WriteUShort(IntPtr pOffset, ushort pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteShort" + ex.ToString());
+                    Console.WriteLine("Error: WriteShort" + ex);
                 }
 
                 result = false;
@@ -977,21 +971,21 @@ namespace VirtualMemory
 
         public bool WriteUInt32(IntPtr pOffset, uint pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteUInt32" + ex.ToString());
+                    Console.WriteLine("Error: WriteUInt32" + ex);
                 }
 
                 result = false;
@@ -1002,21 +996,21 @@ namespace VirtualMemory
 
         public bool WriteUInteger(IntPtr pOffset, uint pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteUInt" + ex.ToString());
+                    Console.WriteLine("Error: WriteUInt" + ex);
                 }
 
                 result = false;
@@ -1027,21 +1021,21 @@ namespace VirtualMemory
 
         public bool WriteUInt64(IntPtr pOffset, ulong pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteUInt64" + ex.ToString());
+                    Console.WriteLine("Error: WriteUInt64" + ex);
                 }
 
                 result = false;
@@ -1052,21 +1046,21 @@ namespace VirtualMemory
 
         public bool WriteULong(IntPtr pOffset, ulong pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteULong" + ex.ToString());
+                    Console.WriteLine("Error: WriteULong" + ex);
                 }
 
                 result = false;
@@ -1077,21 +1071,21 @@ namespace VirtualMemory
 
         public bool WriteFloat(IntPtr pOffset, float pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteFloat" + ex.ToString());
+                    Console.WriteLine("Error: WriteFloat" + ex);
                 }
 
                 result = false;
@@ -1102,21 +1096,21 @@ namespace VirtualMemory
 
         public bool WriteDouble(IntPtr pOffset, double pData)
         {
-            if (this.processHandle == IntPtr.Zero)
+            if (_processHandle == IntPtr.Zero)
             {
-                this.Initialize();
+                Initialize();
             }
 
             bool result;
             try
             {
-                result = this.WriteByteArray(pOffset, BitConverter.GetBytes(pData));
+                result = WriteByteArray(pOffset, BitConverter.GetBytes(pData));
             }
             catch (Exception ex)
             {
-                if (VirtualMemory.debugMode)
+                if (DebugMode)
                 {
-                    Console.WriteLine("Error: WriteDouble" + ex.ToString());
+                    Console.WriteLine("Error: WriteDouble" + ex);
                 }
 
                 result = false;
@@ -1124,15 +1118,15 @@ namespace VirtualMemory
 
             return result;
         }
-        public static bool debugMode;
+        public static bool DebugMode;
 
-        private IntPtr baseAddress;
+        private IntPtr _baseAddress;
 
-        private ProcessModule processModule;
+        private ProcessModule _processModule;
 
-        private Process[] mainProcess;
+        private Process[] _mainProcess;
 
-        private IntPtr processHandle;
+        private IntPtr _processHandle;
 
         [Flags]
         private enum ProcessAccessFlags : uint
